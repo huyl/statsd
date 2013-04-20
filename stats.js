@@ -7,6 +7,7 @@ var dgram  = require('dgram')
   , logger = require('./lib/logger')
   , set = require('./lib/set')
   , pm = require('./lib/process_metrics')
+  , mgmt = require('./lib/mgmt_console')
 
 
 // initialize data structures with defaults for statsd stats
@@ -22,6 +23,7 @@ var pctThreshold = null;
 var flushInterval, keyFlushInt, server, mgmtServer;
 var startup_time = Math.round(new Date().getTime() / 1000);
 var backendEvents = new events.EventEmitter();
+var healthStatus = config.healthStatus || 'up';
 
 // Load and init the backend from the backends/ directory.
 function loadBackend(config, name) {
@@ -246,7 +248,19 @@ config.configFile(process.argv[2], function (config, oldConfig) {
 
         switch(cmd) {
           case "help":
-            stream.write("Commands: stats, counters, timers, gauges, delcounters, deltimers, delgauges, quit\n\n");
+            stream.write("Commands: stats, counters, timers, gauges, delcounters, deltimers, delgauges, health, quit\n\n");
+            break;
+
+          case "health":
+            if (cmdline.length > 0) {
+              var cmdaction = cmdline[0].toLowerCase();
+              if (cmdaction === 'up') {
+                healthStatus = 'up';
+              } else if (cmdaction === 'down') {
+                healthStatus = 'down';
+              }
+            }
+            stream.write("health: " + healthStatus + "\n");
             break;
 
           case "stats":
@@ -307,27 +321,15 @@ config.configFile(process.argv[2], function (config, oldConfig) {
             break;
 
           case "delcounters":
-            for (var counter_index in cmdline) {
-              delete counters[cmdline[counter_index]];
-              stream.write("deleted: " + cmdline[counter_index] + "\n");
-            }
-            stream.write("END\n\n");
+            mgmt.delete_stats(counters, cmdline, stream);
             break;
 
           case "deltimers":
-            for (var timer_index in cmdline) {
-              delete timers[cmdline[timer_index]];
-              stream.write("deleted: " + cmdline[timer_index] + "\n");
-            }
-            stream.write("END\n\n");
+            mgmt.delete_stats(timers, cmdline, stream);
             break;
 
           case "delgauges":
-            for (var gauge_index in cmdline) {
-              delete gauges[cmdline[gauge_index]];
-              stream.write("deleted: " + cmdline[gauge_index] + "\n");
-            }
-            stream.write("END\n\n");
+            mgmt.delete_stats(gauges, cmdline, stream);
             break;
 
           case "quit":
@@ -401,4 +403,16 @@ config.configFile(process.argv[2], function (config, oldConfig) {
       }, keyFlushInterval);
     }
   }
+});
+
+process.on('SIGTERM', function() {
+  if (conf.debug) {
+    util.log('Starting Final Flush');
+  }
+  healthStatus = 'down';
+  process.exit();
+});
+
+process.on('exit', function () {
+  flushMetrics();
 });
